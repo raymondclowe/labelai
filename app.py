@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import logging
 import tempfile
 from flask import Flask, request, jsonify
@@ -134,14 +135,14 @@ def create_prompt(image_part, shop_name=None, gps_coords=None, date_time=None, h
     prompt_parts = [image_part]
     text_parts = ["Analyze the image for supermarket price label details. Return a JSON object with these fields:"]
     fields = {
-        "product_name": "The name of the product (string).",
-        "price": "The price of the item (string).",
+        "brand_name": "The name brand of the product if visible such as Graden Bakery (string).",
+        "product_name": "The name of the product such as Brown Bread (string).",
+        "price": "The actual price of the item after any discount or special offer(string).",
         "unit": "The unit of measure (e.g., kg, lb, each) if available (string).",
-        "sale_price": "If it exists a sale price for the item (string).",
-        "original_price": "If it exists a regular price for the item (string).",
-        "currency": "The currency, such as '$' or '£' (string).",
-        "valid_until": "An expiration date if available (string, format YYYY-MM-DD, can be null).",
-        "barcode": "The product barcode if available (string, or null if not present).",
+        "regular_price": "If it is discounted, then the price before discount(string).",                
+        "discount" : "Is it discounted (bool)",
+        "discount_description": "If it is discounted, the discount rule such as Buy 2, or 20 percent off second item etc (string).",   
+        "discount_calculation": "For example if the discount is 11.90 / 3 or 11.90 for three then the discount calculation should be (11.9/3), or if 2 for 30. it should be (30/2), a string that can be evaluated (string)",
         "weight": "If the item is sold by weight the weight value (string, such as '100g')."
     }
 
@@ -169,7 +170,10 @@ def create_prompt(image_part, shop_name=None, gps_coords=None, date_time=None, h
 
     text_parts.append("\nIf some fields are not present or cannot be determined, use `null` for their value instead of leaving them out. If you are unsure of a value, still make your best guess.")
     text_parts.append("\nLook out for discounts and deals, typically there may be a full price such as 10 in large digits sometimes crossed out, then a deal price such as 15.90/2 meaning $15.90 for 2, so the unit price is 7.95. Return fields showing the discount is true, the total price, and the discount terms, in this case 'buy 2'.")
-    text_parts.append("\nReturn only the JSON.")
+    text_parts.append("\nText in Chinese should be translated to English if possible, or romanized if there is no direct translation.")
+    text_parts.append("\nIn the case of discounted items there may be a Single Price which is the regular price.")
+    text_parts.append("\nIn the case of discounted items there may be a Avg or Average price which is the unit price after discount which should be returned as the Price.")
+    text_parts.append("\nReturn only the JSON, no markup or backticks.")
 
     prompt_parts.append(" ".join(text_parts))
 
@@ -187,6 +191,21 @@ def process_image_file(image_file, debug_save_images=False):
       centered_image = find_center_label(img, debug_save_images=debug_save_images)
       if centered_image is None:
           return None
+
+      # Downscale the image
+      max_resolution = 2000 # Adjust as necessary
+      width, height = centered_image.size
+      if width > max_resolution or height > max_resolution:
+        if width > height:
+          new_width = max_resolution
+          new_height = int(height * (max_resolution / width))
+        else:
+          new_height = max_resolution
+          new_width = int(width * (max_resolution / height))
+
+        logging.info(f"Downscaling image from {width}x{height} to {new_width}x{new_height}")
+        centered_image = centered_image.resize((new_width, new_height), Image.LANCZOS)
+
 
       with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
         temp_path = tmp_file.name
@@ -252,10 +271,20 @@ def process_label():
     print(prompt_parts)
 
     # Get the response from Gemini
+    # Get the response from Gemini
     response_text = send_to_gemini(prompt_parts)
 
     if response_text is None:
       return jsonify({"error": "Failed to get a response from the AI"}), 500
+
+
+    # Preprocess the response to remove Markdown backticks if they exist
+    match = re.search(r'```json\s*([\s\S]*?)\s*```', response_text)
+    if match:
+        response_text = match.group(1) # Get only the content within the backticks
+        logging.info("Markdown backticks removed from the response")
+    else:
+        logging.warning("No markdown backticks found, or markdown backticks weren't closed.")
 
     # Attempt to return the response as json, if this fails just return the string
     try:
