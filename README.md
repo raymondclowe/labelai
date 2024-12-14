@@ -26,13 +26,13 @@ This Flask application provides an API endpoint for processing images of superma
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/<your-username>/<your-repo-name>.git
-    cd <your-repo-name>
+    git clone https://github.com/raymondclowe/labelai
+    cd labelai
     ```
 2.  Create a virtual environment (recommended):
     ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    python3 -m venv .venv
+    source .venv/bin/activate  # On Windows: venv\Scripts\activate
     ```
 3.  Install the required Python packages:
     ```bash
